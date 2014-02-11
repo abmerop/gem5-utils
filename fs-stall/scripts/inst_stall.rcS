@@ -1,0 +1,21 @@
+#!/bin/sh
+
+#
+# All lines end with "&" to background the process, EXCEPT the last core.
+# You may also want to use whatever tool is needed to pin the programs to
+# specific cores.
+#
+# In the example the inst_staller program from src/ was copied to the
+# /extras directory.
+#
+echo "Run program1 here" &
+(/extras/inst_staller  100000000 && echo "Run program2 here") &
+(/extras/inst_staller  150000000 && echo "Run program3 here") &
+(/extras/inst_staller  200000000 && echo "Run program4 here")
+
+# Once all in sync, might want to checkpoint here.
+#/sbin/m5 checkpoint
+
+# Remove the call below for a real simulation.
+/sbin/m5 exit
+

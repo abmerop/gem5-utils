@@ -1,7 +1,20 @@
-Build for ALPHA:
+(1) Build for ALPHA:
 
 gcc inst_staller.c -o inst_staller -Iutil/m5/ util/m5/m5op_alpha.S
 
 or X86:
 
 gcc inst_staller.c -o inst_staller -I./util/m5 util/m5/m5op_x86.S -DM5OP_ADDR=0xFFFF0000
+
+
+(2) Copy to the binary to the disk image:
+
+cp inst_staller disk_images/mountpoint/extras/inst_staller
+
+(3) Run gem5:
+
+build/ALPHA/gem5.fast configs/example/fs.py --disk-image=whatever-alpha.img --kernel=vmlinux --num-cpu=4 --cpu-type=atomic --script=scripts/inst_stall.rcS
+
+or:
+
+build/X86/gem5.fast configs/example/fs.py --disk-image=whatever-x86.img --kernel=vmlinux --num-cpu=4 --cpu-type=atomic --script=scripts/inst_stall.rcS
