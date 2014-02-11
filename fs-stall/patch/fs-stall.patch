@@ -1,0 +1,153 @@
+# HG changeset patch
+# Parent b50780db567bc03438059c94f3ff795f4393e402
+
+diff -r b50780db567b src/arch/alpha/isa/decoder.isa
+--- a/src/arch/alpha/isa/decoder.isa	Fri Jan 31 09:09:49 2014 -0500
++++ b/src/arch/alpha/isa/decoder.isa	Tue Feb 11 12:08:59 2014 -0500
+@@ -1076,8 +1076,11 @@
+             0x58: m5reserved4({{
+                 warn("M5 reserved opcode ignored");
+             }}, IsNonSpeculative);
+-            0x59: m5reserved5({{
+-                warn("M5 reserved opcode ignored");
++            //0x59: m5_getcpuinst({{
++            //    warn("M5 reserved opcode ignored");
++            //}}, IsNonSpeculative);
++            0x59: m5re({{
++                R0 = PseudoInst::getcpuinst(xc->tcBase(), R16);
+             }}, IsNonSpeculative);
+         }
+     }
+diff -r b50780db567b src/arch/x86/isa/decoder/two_byte_opcodes.isa
+--- a/src/arch/x86/isa/decoder/two_byte_opcodes.isa	Fri Jan 31 09:09:49 2014 -0500
++++ b/src/arch/x86/isa/decoder/two_byte_opcodes.isa	Tue Feb 11 12:08:59 2014 -0500
+@@ -207,8 +207,11 @@
+                         0x58: m5reserved4({{
+                             warn("M5 reserved opcode 4 ignored.\n");
+                         }}, IsNonSpeculative);
+-                        0x59: m5reserved5({{
+-                            warn("M5 reserved opcode 5 ignored.\n");
++                        //0x59: m5reserved5({{
++                        //    warn("M5 reserved opcode 5 ignored.\n");
++                        //}}, IsNonSpeculative);
++                        0x59: m5_getcpuinst({{
++                            Rax = PseudoInst::getcpuinst(xc->tcBase(), Rdi);
+                         }}, IsNonSpeculative);
+                         0x5a: m5_work_begin({{
+                             PseudoInst::workbegin(xc->tcBase(), Rdi, Rsi);
+diff -r b50780db567b src/sim/pseudo_inst.cc
+--- a/src/sim/pseudo_inst.cc	Fri Jan 31 09:09:49 2014 -0500
++++ b/src/sim/pseudo_inst.cc	Tue Feb 11 12:08:59 2014 -0500
+@@ -190,11 +190,14 @@
+         workend(tc, args[0], args[1]);
+         break;
+ 
++      case 0x59: // reserved5_func
++        return getcpuinst(tc, args[0]);
++        break;
++
+       case 0x55: // annotate_func
+       case 0x56: // reserved2_func
+       case 0x57: // reserved3_func
+       case 0x58: // reserved4_func
+-      case 0x59: // reserved5_func
+         warn("Unimplemented m5 op (0x%x)\n", func);
+         break;
+ 
+@@ -582,6 +585,37 @@
+     return len;
+ }
+ 
++uint64_t
++getcpuinst(ThreadContext *tc, uint64_t cpunum)
++{
++    std::stringstream fmt;
++    uint64_t rv = 0;
++
++    fmt.str("");
++
++    fmt << "system.cpu" << cpunum << ".committedInsts";
++
++    std::list<Stats::Info *> &allStats = Stats::statsList();
++    std::list<Stats::Info *>::iterator it;
++
++    for (it = allStats.begin(); it != allStats.end(); it++)
++    {
++        Stats::Info* curStat = (*it);
++
++        if (curStat->name == fmt.str()
++            || (cpunum == 0 && curStat->name == "system.cpu.committedInsts"))
++        {
++            Stats::ScalarInfo *scalar = (Stats::ScalarInfo *)curStat;
++
++            rv = (uint64_t)scalar->total();
++
++            break;
++        }
++    }
++
++    return rv;
++}
++
+ void
+ debugbreak(ThreadContext *tc)
+ {
+diff -r b50780db567b src/sim/pseudo_inst.hh
+--- a/src/sim/pseudo_inst.hh	Fri Jan 31 09:09:49 2014 -0500
++++ b/src/sim/pseudo_inst.hh	Tue Feb 11 12:08:59 2014 -0500
+@@ -88,6 +88,7 @@
+ void switchcpu(ThreadContext *tc);
+ void workbegin(ThreadContext *tc, uint64_t workid, uint64_t threadid);
+ void workend(ThreadContext *tc, uint64_t workid, uint64_t threadid);
++uint64_t getcpuinst(ThreadContext *tc, uint64_t cpunum);
+ 
+ } // namespace PseudoInst
+ 
+diff -r b50780db567b util/m5/m5op.h
+--- a/util/m5/m5op.h	Fri Jan 31 09:09:49 2014 -0500
++++ b/util/m5/m5op.h	Tue Feb 11 12:08:59 2014 -0500
+@@ -61,6 +61,7 @@
+ void m5_panic(void);
+ void m5_work_begin(uint64_t workid, uint64_t threadid);
+ void m5_work_end(uint64_t workid, uint64_t threadid);
++uint64_t m5_getcpuinst(uint64_t cpunum);
+ 
+ // These operations are for critical path annotation
+ void m5a_bsm(char *sm, const void *id, int flags);
+diff -r b50780db567b util/m5/m5op_alpha.S
+--- a/util/m5/m5op_alpha.S	Fri Jan 31 09:09:49 2014 -0500
++++ b/util/m5/m5op_alpha.S	Tue Feb 11 12:08:59 2014 -0500
+@@ -91,6 +91,7 @@
+ #define AN_IDENTIFY INST(m5_op, an_identify, 0, annotate_func)
+ #define AN_GETID INST(m5_op, an_getid, 0, annotate_func)
+ 
++#define GETCPUINST INST(m5_op, 0, 0, getcpuinst_func)
+ 
+         .set noreorder
+ 
+@@ -131,3 +132,4 @@
+ SIMPLE_OP(m5a_identify, AN_IDENTIFY)
+ SIMPLE_OP(m5a_getid, AN_GETID)
+ 
++SIMPLE_OP(m5_getcpuinst, GETCPUINST)
+diff -r b50780db567b util/m5/m5op_x86.S
+--- a/util/m5/m5op_x86.S	Fri Jan 31 09:09:49 2014 -0500
++++ b/util/m5/m5op_x86.S	Tue Feb 11 12:08:59 2014 -0500
+@@ -83,3 +83,4 @@
+ TWO_BYTE_OP(m5_panic, panic_func)
+ TWO_BYTE_OP(m5_work_begin, work_begin_func)
+ TWO_BYTE_OP(m5_work_end, work_end_func)
++TWO_BYTE_OP(m5_getcpuinst, getcpuinst_func)
+diff -r b50780db567b util/m5/m5ops.h
+--- a/util/m5/m5ops.h	Fri Jan 31 09:09:49 2014 -0500
++++ b/util/m5/m5ops.h	Tue Feb 11 12:08:59 2014 -0500
+@@ -57,7 +57,8 @@
+ #define reserved2_func          0x56 // Reserved for user
+ #define reserved3_func          0x57 // Reserved for user
+ #define reserved4_func          0x58 // Reserved for user
+-#define reserved5_func          0x59 // Reserved for user
++//#define reserved5_func          0x59 // Reserved for user
++#define getcpuinst_func        0x59
+ 
+ #define work_begin_func          0x5a
+ #define work_end_func            0x5b

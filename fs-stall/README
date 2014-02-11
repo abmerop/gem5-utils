@@ -1,0 +1,7 @@
+Build for ALPHA:
+
+gcc inst_staller.c -o inst_staller -Iutil/m5/ util/m5/m5op_alpha.S
+
+or X86:
+
+gcc inst_staller.c -o inst_staller -I./util/m5 util/m5/m5op_x86.S -DM5OP_ADDR=0xFFFF0000
