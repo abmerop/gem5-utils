@@ -1,0 +1,162 @@
+This patch and script set attempts to align SPEC2006 benchmark simpoints in 
+fullsystem mode. This works by starting processes using the m5term, starting 
+with the process with the furthest simpoint. Assuming the atomic CPU used to 
+fast-forward to the simpoints has an IPC of around 1, using the number of 
+instructions commited in the first process should approximately allow us to 
+know when to start further benchmarks. There is some inaccuracy in this 
+alignment due to the number of instructions needed to parse and run the 
+command line sent via the console. Therefore, this should not be used for 
+aligning small simpoints (e.g., regions with lengths less than about 50M 
+instructions) since the alignment may not be very accurate. The script starts 
+with an initial checkpoint on system boot, followed by a checkpoint of the 
+aligned simpoints. The process of using the script is described below.
+
+
+NOTE: You must have a kernel that duplicates locks for the UART (serial port) 
+used for m5term when running X86 with the classic memory model. Due to the way
+atomic instructions are handled, one lock will cause a deadlock and the 
+simulation will not do any useful work besides simulate a spinlock. You can 
+obtain the patch here:
+http://gem5.nvmain.org/patches/kernel/uart_deadlock_linux-2.6.22.patch. 
+
+The mailing list discussion of this problem is also available here:
+https://www.mail-archive.com/gem5-users@gem5.org/msg10028.html.
+
+===============================================================================
+
+Script options [simpoint_fs.py]:
+
+Required Options:
+ * --simpoint-mode=[init,checkpoint,simulate,check_affinity,fastfwd]
+   Tell which mode to run
+   init - Create a checkpoint after system boot. This assumes your disk image 
+          creates a checkpoint in /etc/init.d/rcS before the runscript is read. 
+          If you are not doing this, you can create a simple rcS file with the 
+          following:
+          
+          /sbin/m5 checkpoint
+          /bin/bash
+
+          You can use the --script option to pass the path to the script above.
+
+    checkpoint - Create a checkpoint of aligned simpoints
+
+    simulate - Run a simulate of an aligned checkpoint in detailed mode. Use 
+               the -I option to specify the number of instructions to run. 
+               This should be equal to the simpoint region length.
+
+    check_affinity - This will run `ps -aF` on the aligned checkpoint. You may
+                     use this to confirm your benchmarks are running on their 
+                     own processor if desired. See the PSR field in the output 
+                     to verify.
+
+    fastfwd - Restore from boot checkpoint and alignment process, then 
+              continue the simulation in detailed mode. Useful if cache warmup
+              is needed.
+
+ * --checkpoint-dir - Where to write checkpoint. The can be same as 
+                      --init-checkpoint-dir.
+
+ * --init-checkpoint-dir - Where to write the system boot checkpoint.
+
+ * --benchmark - A colon (:) delimited list of benchmarks to run. See the 
+                 spec_fs.py file for these, or add your own in this file. 
+                 Needed for everything except --simpoint-mode=init. This will
+                 automatically search for or create a checkpoint for this 
+                 benchmark set. 
+
+ * --cfg - Configuration file for your detailed system, including processor 
+           parameters and cache configuration. An example configuration can
+           be found in configs/spec2006/nehalem.cfg. Credits to Mitch Hayenga
+           for this file.
+
+Optional options:
+ * --private-l2 - This will create one L2 cache for each CPU.
+ * --isolated-cpus - Run each benchmark on it's own isolated CPU [recommended].
+ * --num-cpus - Number of CPUs to use. This script does not care about the cpu
+                count and binds process affinities to cores in a round-robin
+                order based on the total number. If --isolated-cpus is given,
+                these cpus will be used instead of the maximum number.
+ * All other standard gem5 options. See configs/common/Options.py
+
+===============================================================================
+
+Example usage:
+
+ 1) Create an initial boot checkpoint. Here we use 5 cpus, one CPU is used to 
+    run any system processes and the remaining 4 are reserved for benchmarks. 
+    We ignore stats from cpu0 in this case. This creates spec_fs_5/cpt.init.
+
+ build/X86/gem5.fast configs/spec2006/simpoint_fs.py                     \
+                    --cfg=configs/simpoint/nehalem.cfg --num-cpus=5      \
+                    --kernel=x86_64-vmlinux-2.6.22-vmlinux               \
+                    --disk-image=gentoo-amd64-20130822.img               \
+                    --init-checkpoint-dir=spec_fs_5 --simpoint-mode=init \
+                    --isolated-cpus=1,2,3,4                              \
+                    --script=configs/spec2006/spec_fs.rcS
+
+ 2) Create an alignment checkpoint. This creates 
+    spec_fs_5/cpt.astar_bwaves_bzip2_mcf.
+
+ build/X86/gem5.fast configs/spec2006/simpoint_fs.py                \
+                    --cfg=configs/simpoint/nehalem.cfg --num-cpus=5 \
+                    --kernel=x86_64-vmlinux-2.6.22-vmlinux          \
+                    --disk-image=gentoo-amd64-20130822.img          \
+                    --init-checkpoint-dir=spec_fs_5                 \
+                    --simpoint-mode=checkpoint                      \
+                    --isolated-cpus=1,2,3,4                         \
+                    --benchmark=astar:bwaves:bzip2:mcf              \
+                    --checkpoint-dir=spec_fs_5
+
+ 3) Check the affinity (optional).
+
+ build/X86/gem5.fast configs/spec2006/simpoint_fs.py                       \
+                    --cfg=configs/simpoint/nehalem.cfg --num-cpus=5        \
+                    --kernel=x86_64-vmlinux-2.6.22-vmlinux                 \
+                    --disk-image=gentoo-amd64-20130822.img                 \
+                    --simpoint-mode=check_affinity --isolated-cpus=1,2,3,4 \
+                    --benchmark=astar:bwaves:bzip2:mcf 
+                    --checkpoint-dir=spec_fs_5
+
+ root       872   868  0  8425 33012   1 00:00 ?     00:00:00 /cpu2006/bin/473
+ root       873   868  0   607  1708   2 00:00 ?     00:00:00 /cpu2006/bin/410
+ root       874   868  0  7348 24392   3 00:00 ?     00:00:00 /cpu2006/bin/401
+ root       875   868  0 429272 10156  4 00:00 ?     00:00:00 /cpu2006/bin/429
+                                      ^^^ Correct CPUs!
+
+ 4) Run the simulation from checkpoint.
+
+ build/X86/gem5.fast configs/spec2006/simpoint_fs.py                 \
+                    --cfg=configs/simpoint/nehalem.cfg --num-cpus=5  \
+                    --kernel=x86_64-vmlinux-2.6.22-vmlinux           \
+                    --disk-image=gentoo-amd64-20130822.img           \
+                    --simpoint-mode=simulate --isolated-cpus=1,2,3,4 \
+                    --benchmark=astar:bwaves:bzip2:mcf               \
+                    --checkpoint-dir=spec_fs_5 -I 250000000
+
+ 5) Run the simulation via fastforward (alternative to steps 3 and 4).
+
+ build/X86/gem5.fast configs/spec2006/simpoint_fs.py                        \
+                    --cfg=configs/simpoint/nehalem.cfg                      \
+                    --kernel=x86_64-vmlinux-2.6.22-vmlinux                  \
+                    --disk-image=gentoo-amd64-20130822.img                  \
+                    --init-checkpoint-dir=spec_fs_5 --simpoint-mode=fastfwd \
+                    --isolated-cpus=1,2,3,4                                 \
+                    --benchmark=astar:bwaves:bzip2:mcf
+
+
+===============================================================================
+
+Adding benchmarks
+
+You can add benchmarks in the spec_fs.py script. Each benchmark should include
+the full command line to run the process. You can also specify the working
+directory in case the process looks for files in it's current directory. By
+default processes are run in /tmp. You should also specify the simpoint start
+instruction for each benchmark.
+
+Note that the simpoint start instructions that are included with this patch
+may or may not be the most representative region for each benchmark. You
+should run simpoint on your own and characterize the simpoint region to get
+information about what you are actually simulating.
+

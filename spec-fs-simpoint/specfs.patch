@@ -1,9 +1,62 @@
 # HG changeset patch
-# Parent 16fe0ba682185d6b21568c2d5ab405b047d28fd1
+# Parent 5125a461f509541aeb68769c209d326f0ae216b7
 
-diff -r 16fe0ba68218 configs/spec2006/pyterm.py
+diff -r 5125a461f509 configs/spec2006/nehalem.cfg
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
-+++ b/configs/spec2006/pyterm.py	Mon Jun 23 10:39:02 2014 -0400
++++ b/configs/spec2006/nehalem.cfg	Tue Jun 24 09:50:24 2014 -0400
+@@ -0,0 +1,49 @@
++[cpu]
++type = nehalem
++
++[icache]
++hit_latency = 1
++response_latency = 1
++mshrs = 4
++tgts_per_mshr = 8
++size = 32kB
++assoc = 2
++is_top_level = true
++prefetch_on_access = true
++prefetcher = TaggedPrefetcher(degree = 2, latency = 1)
++
++[dcache]
++hit_latency = 3
++response_latency = 2
++mshrs = 16
++tgts_per_mshr = 8
++size = 32kB
++assoc = 4
++write_buffers = 16
++is_top_level = true
++prefetch_on_access = true
++prefetcher = StridePrefetcher(degree = 2, latency = 1)
++
++[l2]
++# 8 additional cycles on top of L1 miss
++hit_latency = 6
++response_latency = 2
++mshrs = 16
++tgts_per_mshr = 8
++size = 256kB
++assoc = 8
++write_buffers = 8
++prefetch_on_access = true
++prefetcher = StridePrefetcher(degree = 4, latency = 1)
++
++[l3]
++# 24 additional cycles on top of l2 miss
++hit_latency = 14
++response_latency = 10
++mshrs = 16
++tgts_per_mshr = 8
++size = 4MB
++assoc = 16
++write_buffers = 8
++prefetch_on_access = true
++prefetcher = StridePrefetcher(degree = 8, latency = 1)
+diff -r 5125a461f509 configs/spec2006/pyterm.py
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/configs/spec2006/pyterm.py	Tue Jun 24 09:50:24 2014 -0400
 @@ -0,0 +1,101 @@
 +#!/usr/bin/python
 +
@@ -106,10 +159,10 @@ diff -r 16fe0ba68218 configs/spec2006/pyterm.py
 +    inpipe.close()
 +    term.join()
 +
-diff -r 16fe0ba68218 configs/spec2006/simpoint_fs.py
+diff -r 5125a461f509 configs/spec2006/simpoint_fs.py
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
-+++ b/configs/spec2006/simpoint_fs.py	Mon Jun 23 10:39:02 2014 -0400
-@@ -0,0 +1,529 @@
++++ b/configs/spec2006/simpoint_fs.py	Tue Jun 24 09:50:24 2014 -0400
+@@ -0,0 +1,552 @@
 +# Copyright (c) 2014, The Microsystem Design Laboratory (MDL)
 +# Department of Computer Science and Engineering, The Pennsylvania State University
 +# All rights reserved.
@@ -166,7 +219,7 @@ diff -r 16fe0ba68218 configs/spec2006/simpoint_fs.py
 +import Simulation
 +import MemConfig
 +from Caches import *
-+import spec_fs
++import spec_fs as spec_fs
 +import pyterm
 +import os
 +import errno
@@ -252,10 +305,6 @@ diff -r 16fe0ba68218 configs/spec2006/simpoint_fs.py
 +    print "Error: no system config."
 +    sys.exit(1)
 +
-+if options.simpoint_mode == "init" and options.script == None:
-+    print "Should provide an init script to checkpoint and start bash."
-+    sys.exit(1)
-+
 +if options.simpoint_mode == "init" and options.init_checkpoint_dir == None:
 +    print "Error: Need --init-checkpoint-dir for init mode."
 +    sys.exit(1)
@@ -285,9 +334,9 @@ diff -r 16fe0ba68218 configs/spec2006/simpoint_fs.py
 +        print "Warning: All CPUs are isolated!"
 +
 +# Parse benchmark option
++simpoint_list = []
 +if options.simpoint_mode == "checkpoint" or options.simpoint_mode == "fastfwd":
 +    bench_list = options.benchmark.split(':')
-+    simpoint_list = []
 +    fsBench_list = []
 +    simpoint_inst_list = []
 +
@@ -355,16 +404,18 @@ diff -r 16fe0ba68218 configs/spec2006/simpoint_fs.py
 +# For now, assign all the CPUs to the same clock domain
 +np = options.num_cpus
 +
-+test_sys.cpu = [AtomicSimpleCPU(clk_domain=test_sys.cpu_clk_domain, cpu_id=i, switched_out=False)
-+                for i in xrange(np)]
++test_sys.cpu = [AtomicSimpleCPU(clk_domain=test_sys.cpu_clk_domain, cpu_id=i, switched_out=False) for i in xrange(np)]
 +
 +for i in xrange(np):
 +    test_sys.cpu[i].createThreads()
++    if options.simpoint_mode == "checkpoint" or options.simpoint_mode == "fastfwd":
++        # This is meant to get to the last simpoint. Not sure what will happen if
++        # the simpoint is instruction 0.
++        test_sys.cpu[i].max_insts_all_threads = max(simpoint_list)
 +
 +if options.simpoint_mode == "simulate" or options.simpoint_mode == "fastfwd":
 +    cpu_options = dict(config.items('cpu'))
-+    simulate_cpu = [Nehalem(clk_domain=test_sys.cpu_clk_domain, cpu_id=i, switched_out=True, **cpu_options)
-+                    for i in xrange(np)]
++    simulate_cpu = [Nehalem(clk_domain=test_sys.cpu_clk_domain, cpu_id=i, switched_out=True, **cpu_options) for i in xrange(np)]
 +    for i in xrange(np):
 +        simulate_cpu[i].workload = test_sys.cpu[i].workload
 +        if options.max_insts:
@@ -511,7 +562,7 @@ diff -r 16fe0ba68218 configs/spec2006/simpoint_fs.py
 +        stop_cmd = "kill -s SIGSTOP "
 +        for pid in xrange(len(options.benchmark.split(':'))):
 +            stop_cmd = "%s $PID%i" % (stop_cmd, pid)
-+        inpipe.send("%s\n" % stop_cmd)
++        #inpipe.send("%s\n" % stop_cmd)
 +        inpipe.send("/sbin/m5 checkpoint 1000000\n")
 +
 +        exit_event = m5.simulate()
@@ -559,8 +610,7 @@ diff -r 16fe0ba68218 configs/spec2006/simpoint_fs.py
 +    cont_cmd = "kill -s SIGCONT "
 +    for pid in xrange(len(options.benchmark.split(':'))):
 +        cont_cmd = "%s $PID%i" % (cont_cmd, pid)
-+    inpipe.send("%s\n" % cont_cmd)
-+    #inpipe.send("kill -s SIGCONT $PID0 $PID1 $PID2 $PID3\n")
++    #inpipe.send("%s\n" % cont_cmd)
 +    inpipe.send("echo Affirmative\n")
 +elif options.simpoint_mode == "check_affinity":
 +    (term, inpipe) = pyterm.pyterm(term_port)
@@ -572,6 +622,7 @@ diff -r 16fe0ba68218 configs/spec2006/simpoint_fs.py
 +
 +    print "Wait stopped because %s" % exit_cause
 +
++    inpipe.send("mount -t proc proc /proc\n")
 +    inpipe.send("ps -aF\n")
 +    inpipe.send("/sbin/m5 exit\n")
 +
@@ -589,7 +640,7 @@ diff -r 16fe0ba68218 configs/spec2006/simpoint_fs.py
 +        mkdir_p(options.init_checkpoint_dir)
 +        m5.checkpoint(os.path.join(options.init_checkpoint_dir, "cpt.init"))
 +    pyterm.close_pyterm(term, inpipe)
-+elif options.simpoint_mode == "checkpoint":
++elif options.simpoint_mode == "checkpoint" or options.simpoint_mode == "fastfwd":
 +    num_inst_steps = 0
 +    max_inst_steps = len(simpoint_list)
 +
@@ -607,7 +658,7 @@ diff -r 16fe0ba68218 configs/spec2006/simpoint_fs.py
 +
 +        for bench in sorted_points:
 +            if bench.getStartInst() == cur_inst:
-+                start_cpu = start_count
++                start_cpu = start_count % options.num_cpus
 +
 +                # Start on an isolated_cpu..
 +                if options.isolated_cpus != None:
@@ -620,7 +671,24 @@ diff -r 16fe0ba68218 configs/spec2006/simpoint_fs.py
 +                start_count = start_count + 1
 +
 +        if start_count >= len(sorted_points):
++            # Continue until max instruction...
++
++            exit_event = m5.simulate()
++            exit_cause = exit_event.getCause()
++
++            if exit_cause != "all threads reached the max instruction count":
++                print "WARNING: Expected max instruction count exit, but the cause was: %s" % exit_cause
++                print "Continuing anyways..."
++
++            if options.simpoint_mode == "fastfwd":
++                break
++
 +            print "Sending checkpoint write (deferred)"
++
++            stop_cmd = "kill -s SIGSTOP "
++            for pid in xrange(len(options.benchmark.split(':'))):
++                stop_cmd = "%s $PID%i" % (stop_cmd, pid)
++            #inpipe.send("%s\n" % stop_cmd)
 +            inpipe.send("/sbin/m5 checkpoint 1000000\n")
 +
 +        exit_event = m5.simulate()
@@ -631,17 +699,185 @@ diff -r 16fe0ba68218 configs/spec2006/simpoint_fs.py
 +
 +        assert exit_cause is not "simpoint starting point found"
 +
++    if options.simpoint_mode == "fastfwd":
++        m5.switchCpus(test_sys, switch_cpu_list)
++
++        print "*** FAST FORWARD FINISHED ***"
++
++        exit_event = m5.simulate(maxtick - m5.curTick())
++        exit_cause = exit_event.getCause()
++
 +    pyterm.close_pyterm(term, inpipe)
-+elif options.simpoint_mode == "simulate" or options.simpoint_mode == "fastfwd":
++elif options.simpoint_mode == "simulate":
 +    pyterm.close_pyterm(term, inpipe)
 +
 +print 'Exiting @ tick %i because %s' % (m5.curTick(), exit_event.getCause())
 +if not m5.options.interactive:
 +    sys.exit(exit_event.getCode())
 +
-diff -r 16fe0ba68218 configs/spec2006/spec_fs.py
+diff -r 5125a461f509 configs/spec2006/spec_fs.py
 --- /dev/null	Thu Jan 01 00:00:00 1970 +0000
-+++ b/configs/spec2006/spec_fs.py	Mon Jun 23 10:39:02 2014 -0400
++++ b/configs/spec2006/spec_fs.py	Tue Jun 24 09:50:24 2014 -0400
+@@ -0,0 +1,150 @@
++#spec_fs.py
++
++import sys
++
++class fsBench:
++    def __init__(self, cmd):
++        self.cmd = cmd
++        self.cwd = "/tmp"
++        self.simpoint = 1
++
++    def setCwd(self, cwd):
++        self.cwd = cwd
++
++    def setSimpoint(self, simpoint):
++        self.simpoint = simpoint
++
++    def setStartInst(self, inst):
++        self.start_inst = inst
++
++    def setName(self, name):
++        self.name = name
++
++    def getCmd(self):
++        return self.cmd
++
++    def getCwd(self):
++        return self.cwd
++
++    def getSimpoint(self):
++        return self.simpoint
++
++    def getStartInst(self):
++        return self.start_inst
++
++    def getName(self):
++        return self.name
++
++spec_fs_cmd = {}
++
++# Set benchmark command line
++spec_fs_cmd["perlbench"] = fsBench("/cpu2006/bin/spec.perlbench_base.x86-gcc -I/cpu2006/400.perlbench/data/all/input/splitmail.pl /cpu2006/400.perlbench/data/all/input/splitmail.pl 1600 12 26 16 4500")
++spec_fs_cmd["bzip2"] = fsBench("/cpu2006/bin/spec.bzip2_base.x86-gcc /cpu2006/401.bzip2/data/all/input/input.program 280")
++spec_fs_cmd["gcc"] = fsBench("/cpu2006/bin/spec.gcc_base.x86-gcc /cpu2006/403.gcc/data/ref/input/200.i -o gcc_403.gcc_200.s")
++spec_fs_cmd["bwaves"] = fsBench("/cpu2006/bin/spec.bwaves_base.x86-gcc /cpu2006/410.bwaves/data/ref/input/bwaves.in")
++spec_fs_cmd["gamess"] = fsBench("/cpu2006/bin/spec.gamess_base.x86-gcc < /cpu2006/416.gamess/data/ref/input/triazolium.config")
++spec_fs_cmd["mcf"] = fsBench("/cpu2006/bin/spec.mcf_base.x86-gcc /cpu2006/429.mcf/data/ref/input/inp.in")
++spec_fs_cmd["milc"] = fsBench("/cpu2006/bin/spec.milc_base.x86-gcc < /cpu2006/433.milc/data/ref/input/su3imp.in")
++spec_fs_cmd["zeusmp"] = fsBench("/cpu2006/bin/spec.zeusmp_base.x86-gcc")
++spec_fs_cmd["gromacs"] = fsBench("/cpu2006/bin/spec.gromacs_base.x86-gcc -silent -deffnm /cpu2006/435.gromacs/data/ref/input/gromacs.tpr -name 0")
++spec_fs_cmd["cactusADM"] = fsBench("/cpu2006/bin/spec.cactusADM_base.x86-gcc /cpu2006/436.cactusADM/data/ref/input/benchADM.par")
++spec_fs_cmd["leslie3d"] = fsBench("cpu2006/bin/spec.leslie3d_base.x86-gcc < /cpu2006/437.leslie3d/data/ref/input/leslie3d.in")
++spec_fs_cmd["namd"] = fsBench("/cpu2006/bin/spec.namd_base.x86-gcc --input /cpu2006/444.namd/data/all/input/namd.input --iterations 38 --output namd.out")
++spec_fs_cmd["gobmk"] = fsBench("/cpu2006/bin/spec.gobmk_base.x86-gcc --quiet --mode gtp < /cpu2006/445.gobmk/data/ref/input/nngs.tst")
++spec_fs_cmd["dealII"] = fsBench("/cpu2006/bin/spec.dealII_base.x86-gcc 23")
++spec_fs_cmd["soplex"] = fsBench("/cpu2006/bin/spec.soplex_base.x86-gcc -m3500 /cpu2006/450.soplex/data/ref/input/ref.mps")
++spec_fs_cmd["povray"] = fsBench("/cpu2006/bin/spec.povray_base.x86-gcc /cpu2006/453.povray/data/all/input/SPEC-benchmark-ref.ini")
++spec_fs_cmd["calculix"] = fsBench("/cpu2006/bin/spec.calculix_base.x86-gcc -i /cpu2006/454.calculix/data/ref/input/hyperviscoplastic")
++spec_fs_cmd["hmmer"] = fsBench("/cpu2006/bin/spec.hmmer_base.x86-gcc --fixed 0 --mean 500 --num 500000 --sd 350 --seed 0 /cpu2006/456.hmmer/data/ref/input/retro.hmm")
++spec_fs_cmd["sjeng"] = fsBench("/cpu2006/bin/spec.sjeng_base.x86-gcc /cpu2006/458.sjeng/data/ref/input/ref.txt")
++spec_fs_cmd["GemsFDTD"] = fsBench("/cpu2006/bin/spec.GemsFDTD_base.x86-gcc")
++spec_fs_cmd["libquantum"] = fsBench("/cpu2006/bin/spec.libquantum_base.x86-gcc 1397 8")
++spec_fs_cmd["h264ref"] = fsBench("/cpu2006/bin/spec.h264ref_base.x86-gcc -d /cpu2006/464.h264ref/data/ref/input/foreman_ref_encoder_baseline.cfg")
++spec_fs_cmd["tonto"] = fsBench("/cpu2006/bin/spec.tonto_base.x86-gcc")
++spec_fs_cmd["lbm"] = fsBench("/cpu2006/bin/spec.lbm_base.x86-gcc 3000 reference.dat 0 0 /cpu2006/470.lbm/data/ref/input/100_100_130_ldc.of")
++spec_fs_cmd["omnetpp"] = fsBench("/cpu2006/bin/spec.omnetpp_base.x86-gcc /cpu2006/471.omnetpp/data/ref/input/omnetpp.ini")
++spec_fs_cmd["astar"] = fsBench("/cpu2006/bin/spec.astar_base.x86-gcc /cpu2006/473.astar/data/ref/input/BigLakes2048.cfg")
++spec_fs_cmd["wrf"] = fsBench("/cpu2006/bin/spec.wrf_base.x86-gcc /cpu2006/481.wrf/data/ref/input/namelist.input")
++spec_fs_cmd["sphinx"] = fsBench("/cpu2006/bin/spec.sphinx_livepretend_base.x86-gcc /cpu2006/482.sphinx3/data/all/input/model/lm/an4/an4.ctl . /cpu2006/482.sphinx3/data/all/input/args.an4")
++spec_fs_cmd["xalancbmk"] = fsBench("/cpu2006/bin/spec.Xalan_base.x86-gcc -v /cpu2006/483.xalancbmk/data/ref/input/t5.xml /cpu2006/483.xalancbmk/data/ref/input/xalanc.xsl")
++spec_fs_cmd["specrand_i"] = fsBench("/cpu2006/bin/spec.specrand_base.x86-gcc 324342 24239")
++spec_fs_cmd["specrand_f"] = fsBench("/cpu2006/bin/spec.specrand_base.x86-gcc 324342 24239")
++
++#
++# Benchmarks to test pyterm -- These program output test at the beginning
++#
++
++# test1 -- hmmer
++spec_fs_cmd["test1"] = fsBench("/cpu2006/bin/spec.hmmer_base.x86-gcc --fixed 0 --mean 500 --num 500000 --sd 350 --seed 0 /cpu2006/456.hmmer/data/ref/input/retro.hmm")
++# test2 -- gobmk
++spec_fs_cmd["test2"] = fsBench("/cpu2006/bin/spec.gobmk_base.x86-gcc --mode gtp < /cpu2006/445.gobmk/data/ref/input/nngs.tst")
++# test3 -- mcf
++spec_fs_cmd["test3"] = fsBench("/cpu2006/bin/spec.mcf_base.x86-gcc /cpu2006/429.mcf/data/ref/input/inp.in")
++# test4 -- libquantum
++spec_fs_cmd["test4"] = fsBench("/cpu2006/bin/spec.libquantum_base.x86-gcc 1397 8")
++
++# Set the benchmark's working directory
++spec_fs_cmd["bwaves"].setCwd("/cpu2006/410.bwaves/data/ref/input")
++spec_fs_cmd["gamess"].setCwd("/cpu2006/416.gamess/data/ref/input")
++spec_fs_cmd["zeusmp"].setCwd("/cpu2006/434.zeusmp/data/ref/input")
++spec_fs_cmd["gobmk"].setCwd("/cpu2006/445.gobmk/data/all/input")
++spec_fs_cmd["povray"].setCwd("/cpu2006/453.povray/data/all/input")
++spec_fs_cmd["GemsFDTD"].setCwd("/cpu2006/459.GemsFDTD/data/ref/input")
++spec_fs_cmd["h264ref"].setCwd("/cpu2006/464.h264ref/data/all/input")
++spec_fs_cmd["tonto"].setCwd("/cpu2006/465.tonto/data/ref/input")
++spec_fs_cmd["omnetpp"].setCwd("/cpu2006/471.omnetpp/data/ref/input")
++spec_fs_cmd["astar"].setCwd("/cpu2006/473.astar/data/ref/input")
++spec_fs_cmd["wrf"].setCwd("/cpu2006/481.wrf/data/all/input")
++spec_fs_cmd["sphinx"].setCwd("/cpu2006/482.sphinx3/data/all/input")
++
++spec_fs_cmd["test2"].setCwd("/cpu2006/445.gobmk/data/all/input")
++
++# Set simpoint start
++spec_fs_cmd["astar"].setSimpoint(5600000000)
++spec_fs_cmd["bwaves"].setSimpoint(7800000000)
++spec_fs_cmd["GemsFDTD"].setSimpoint(200000000)
++spec_fs_cmd["gobmk"].setSimpoint(0)
++spec_fs_cmd["lbm"].setSimpoint(3000000000)
++spec_fs_cmd["leslie3d"].setSimpoint(6000000000)
++spec_fs_cmd["libquantum"].setSimpoint(9400000000)
++spec_fs_cmd["mcf"].setSimpoint(3400000000)
++spec_fs_cmd["milc"].setSimpoint(7800000000)
++spec_fs_cmd["soplex"].setSimpoint(6600000000)
++spec_fs_cmd["zeusmp"].setSimpoint(6400000000)
++
++# Low memory usage benchmarks
++spec_fs_cmd["bzip2"].setSimpoint(4000000000)
++spec_fs_cmd["cactusADM"].setSimpoint(6600000000)
++spec_fs_cmd["gamess"].setSimpoint(4200000000)
++spec_fs_cmd["gcc"].setSimpoint(600000000)
++spec_fs_cmd["gromacs"].setSimpoint(3000000000)
++spec_fs_cmd["h264ref"].setSimpoint(5400000000)
++spec_fs_cmd["hmmer"].setSimpoint(4200000000)
++spec_fs_cmd["namd"].setSimpoint(7400000000)
++spec_fs_cmd["omnetpp"].setSimpoint(9200000000)
++spec_fs_cmd["povray"].setSimpoint(4000000000)
++spec_fs_cmd["sjeng"].setSimpoint(1400000000)
++spec_fs_cmd["sphinx"].setSimpoint(0)
++spec_fs_cmd["tonto"].setSimpoint(600000000)
++
++# Tests -- start in a short time for testing
++spec_fs_cmd["test1"].setSimpoint(30000000)
++spec_fs_cmd["test2"].setSimpoint(20000000)
++spec_fs_cmd["test3"].setSimpoint(10000000)
++spec_fs_cmd["test4"].setSimpoint(40000000)
++
++
++def getSPECFSBench(bench):
++    if not bench in spec_fs_cmd:
++        print "Benchmark %s not found!" % bench
++        sys.exit(1)
++
++    spec_fs_cmd[bench].setName(bench)
++
++    return spec_fs_cmd[bench]
++
++
++def getSPECCmd(bench, cpu):
++    return "cd %s; taskset -c %d %s &\n" % (bench.cwd, cpu, bench.cmd)
++
++
+diff -r 5125a461f509 configs/spec2006/spec_fs.rcS
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/configs/spec2006/spec_fs.rcS	Tue Jun 24 09:50:24 2014 -0400
+@@ -0,0 +1,2 @@
++/sbin/m5 checkpoint
++/bin/bash
+diff -r 5125a461f509 configs/spec2006/spec_fs_matt.py
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/configs/spec2006/spec_fs_matt.py	Tue Jun 24 09:50:24 2014 -0400
 @@ -0,0 +1,150 @@
 +#spec_fs.py
 +
@@ -776,7 +1012,7 @@ diff -r 16fe0ba68218 configs/spec2006/spec_fs.py
 +spec_fs_cmd["test1"].setSimpoint(30000000)
 +spec_fs_cmd["test2"].setSimpoint(20000000)
 +spec_fs_cmd["test3"].setSimpoint(10000000)
-+spec_fs_cmd["test4"].setSimpoint(0)
++spec_fs_cmd["test4"].setSimpoint(40000000)
 +
 +
 +def getSPECFSBench(bench):
@@ -793,15 +1029,9 @@ diff -r 16fe0ba68218 configs/spec2006/spec_fs.py
 +    return "cd %s; taskset -c %d %s &\n" % (bench.cwd, cpu, bench.cmd)
 +
 +
-diff -r 16fe0ba68218 configs/spec2006/spec_fs.rcS
---- /dev/null	Thu Jan 01 00:00:00 1970 +0000
-+++ b/configs/spec2006/spec_fs.rcS	Mon Jun 23 10:39:02 2014 -0400
-@@ -0,0 +1,2 @@
-+/sbin/m5 checkpoint
-+/bin/bash
-diff -r 16fe0ba68218 src/dev/Terminal.py
---- a/src/dev/Terminal.py	Fri Jun 20 18:15:48 2014 -0400
-+++ b/src/dev/Terminal.py	Mon Jun 23 10:39:02 2014 -0400
+diff -r 5125a461f509 src/dev/Terminal.py
+--- a/src/dev/Terminal.py	Tue Jun 24 08:37:03 2014 -0400
++++ b/src/dev/Terminal.py	Tue Jun 24 09:50:24 2014 -0400
 @@ -33,6 +33,17 @@
  class Terminal(SimObject):
      type = 'Terminal'
@@ -820,9 +1050,9 @@ diff -r 16fe0ba68218 src/dev/Terminal.py
      intr_control = Param.IntrControl(Parent.any, "interrupt controller")
      port = Param.TcpPort(3456, "listen port")
      number = Param.Int(0, "terminal number")
-diff -r 16fe0ba68218 src/dev/terminal.cc
---- a/src/dev/terminal.cc	Fri Jun 20 18:15:48 2014 -0400
-+++ b/src/dev/terminal.cc	Mon Jun 23 10:39:02 2014 -0400
+diff -r 5125a461f509 src/dev/terminal.cc
+--- a/src/dev/terminal.cc	Tue Jun 24 08:37:03 2014 -0400
++++ b/src/dev/terminal.cc	Tue Jun 24 09:50:24 2014 -0400
 @@ -154,6 +154,8 @@
      ccprintf(cerr, "Listening for %s connection on port %d\n",
              name().substr(p1+1,p2-p1), port);
@@ -832,9 +1062,9 @@ diff -r 16fe0ba68218 src/dev/terminal.cc
      listenEvent = new ListenEvent(this, listener.getfd(), POLLIN);
      pollQueue.schedule(listenEvent);
  }
-diff -r 16fe0ba68218 src/dev/terminal.hh
---- a/src/dev/terminal.hh	Fri Jun 20 18:15:48 2014 -0400
-+++ b/src/dev/terminal.hh	Mon Jun 23 10:39:02 2014 -0400
+diff -r 5125a461f509 src/dev/terminal.hh
+--- a/src/dev/terminal.hh	Tue Jun 24 08:37:03 2014 -0400
++++ b/src/dev/terminal.hh	Tue Jun 24 09:50:24 2014 -0400
 @@ -89,6 +89,8 @@
      Terminal(const Params *p);
      ~Terminal();
